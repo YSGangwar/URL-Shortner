@@ -1,9 +1,13 @@
+const { error } = require('console');
 const pool = require('../utils/postrgredb');
 const crypto = require('crypto');
-
+const Redis = require('redis');
 const BASE62_CHARS = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const DEFAULT_EXPIRATION  = 360000;
 
- 
+const redisClient = Redis.createClient();
+redisClient.connect().catch(console.error); 
+
 
 function toBase62(buffer) {
     const base62 = [];
@@ -28,6 +32,9 @@ const urlShortner = async(url)=>{
     try {
         const totalRows = await pool.query('SELECT COUNT(*) FROM URLS');
         const hashedData  = hashToBase62(`URLID${totalRows.rows[0].count}`);
+
+        await redisClient.set(hashedData, url, { EX: DEFAULT_EXPIRATION });
+
         const hashedUrl = 'http://localhost:3001/'+ hashedData;
         const query = 'INSERT INTO URLS (hashedurl, url) VALUES ( $1, $2)';
         const values = [hashedData, url];
@@ -42,10 +49,18 @@ const urlShortner = async(url)=>{
 
 const urlFinder = async(hashedData) => {
     try {   
+
+        const cachedUrl = await redisClient.get(hashedData);
+	
+        if (cachedUrl) {    
+          await redisClient.set(hashedData, cachedUrl, { EX: DEFAULT_EXPIRATION });
+          return cachedUrl;
+        }
+
+
         const databaseKey = hashedData;
         const query = 'SELECT URL FROM URLS WHERE HASHEDURL = $1';
         const values = [databaseKey];
-
         const result = await pool.query(query, values);
 
         if (result.rows.length > 0) {
